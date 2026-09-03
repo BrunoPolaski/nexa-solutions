@@ -23,6 +23,11 @@ services:
     environment:
       # Dentro da rede do Compose o banco responde pelo nome do serviço.
       POSTGRES_HOST: db
+    volumes:
+      # Código montado a partir do host: o autoreload do runserver e a suíte de
+      # testes passam a refletir o working tree sem exigir um novo build.
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
     ports:
       - "8000:8000"
     depends_on:
