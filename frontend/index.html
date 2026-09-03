@@ -57,18 +57,64 @@
       color: #166534;
       font-weight: bold;
     }
+
+    .indicadores {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .indicador {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .indicador strong {
+      display: block;
+      font-size: 32px;
+      color: #1d4ed8;
+    }
+
+    .filtro {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .filtro label {
+      margin-bottom: 0;
+    }
+
+    .filtro select {
+      width: auto;
+      margin-bottom: 0;
+    }
   </style>
 </head>
 <body>
   <h1>Sistema de Chamados</h1>
-  <p>Interface inicial da Nexa Solutions.</p>
+  <p>Interface da Nexa Solutions.</p>
+
+  <section>
+    <h2>Indicadores</h2>
+    <div class="indicadores" id="indicadores">
+      <div class="indicador"><strong id="ind-total">–</strong>Total</div>
+      <div class="indicador"><strong id="ind-abertos">–</strong>Abertos</div>
+      <div class="indicador"><strong id="ind-em-andamento">–</strong>Em andamento</div>
+      <div class="indicador"><strong id="ind-concluidos">–</strong>Concluídos</div>
+    </div>
+  </section>
 
   <section>
     <h2>Abrir chamado</h2>
 
     <form id="form-chamado">
-      <label for="titulo">Título</label>
-      <input id="titulo" name="titulo" type="text">
+      <label for="titulo">Título *</label>
+      <input id="titulo" name="titulo" type="text" required>
 
       <label for="descricao">Descrição</label>
       <textarea id="descricao" name="descricao"></textarea>
@@ -88,36 +134,83 @@
 
   <section>
     <h2>Chamados cadastrados</h2>
-    <button id="atualizar">Atualizar lista</button>
+
+    <div class="filtro">
+      <div>
+        <label for="filtro-status">Filtrar por status</label>
+        <select id="filtro-status">
+          <option value="">Todos</option>
+          <option value="ABERTO">Aberto</option>
+          <option value="EM_ANDAMENTO">Em andamento</option>
+          <option value="CONCLUIDO">Concluído</option>
+        </select>
+      </div>
+      <button id="atualizar" type="button">Atualizar lista</button>
+    </div>
+
     <div id="lista-chamados"></div>
   </section>
 
   <script>
-    const API_URL = "http://localhost:8000/api/chamados/";
+    // Caminhos relativos: o Django serve esta página e a API na mesma origem,
+    // então não há dependência de host fixo nem necessidade de CORS.
+    const API_CHAMADOS = "/api/chamados/";
+    const API_INDICADORES = "/api/indicadores/";
+
+    const escapar = (texto) => String(texto).replace(/[&<>"']/g, (caractere) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[caractere]);
+
+    async function carregarIndicadores() {
+      try {
+        const resposta = await fetch(API_INDICADORES);
+        const dados = await resposta.json();
+
+        document.getElementById("ind-total").textContent = dados.total;
+        document.getElementById("ind-abertos").textContent = dados.abertos;
+        document.getElementById("ind-em-andamento").textContent = dados.em_andamento;
+        document.getElementById("ind-concluidos").textContent = dados.concluidos;
+      } catch (erro) {
+        document.querySelectorAll(".indicador strong")
+          .forEach((elemento) => { elemento.textContent = "–"; });
+      }
+    }
 
     async function listarChamados() {
       const lista = document.getElementById("lista-chamados");
+      const status = document.getElementById("filtro-status").value;
+      const url = status ? `${API_CHAMADOS}?status=${encodeURIComponent(status)}` : API_CHAMADOS;
+
       lista.innerHTML = "<p>Carregando...</p>";
 
       try {
-        const resposta = await fetch(API_URL);
+        const resposta = await fetch(url);
         const chamados = await resposta.json();
 
+        if (!resposta.ok) {
+          lista.innerHTML = "<p class='erro'>Não foi possível consultar a API.</p>";
+          return;
+        }
+
         if (chamados.length === 0) {
-          lista.innerHTML = "<p>Nenhum chamado cadastrado.</p>";
+          lista.innerHTML = "<p>Nenhum chamado encontrado para este filtro.</p>";
           return;
         }
 
         lista.innerHTML = chamados.map((chamado) => `
           <article>
-            <strong>#${chamado.id} — ${chamado.titulo || "Sem título"}</strong>
-            <p>${chamado.descricao || "Sem descrição"}</p>
-            <p>Status: ${chamado.status}</p>
+            <strong>#${chamado.id} — ${escapar(chamado.titulo)}</strong>
+            <p>${escapar(chamado.descricao || "Sem descrição")}</p>
+            <p>Status: ${escapar(chamado.status)}</p>
           </article>
         `).join("");
       } catch (erro) {
         lista.innerHTML = "<p class='erro'>Não foi possível consultar a API.</p>";
       }
+    }
+
+    async function atualizarTela() {
+      await Promise.all([carregarIndicadores(), listarChamados()]);
     }
 
     document.getElementById("form-chamado").addEventListener("submit", async (evento) => {
@@ -131,33 +224,38 @@
       };
 
       try {
-        const resposta = await fetch(API_URL, {
+        const resposta = await fetch(API_CHAMADOS, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(dados)
         });
 
+        const corpo = await resposta.json();
+
         if (!resposta.ok) {
+          // Mostra a mensagem de validação devolvida pela API
+          // (ex.: "O título é obrigatório.") em vez de um erro genérico.
           mensagem.className = "erro";
-          mensagem.textContent = "Erro ao cadastrar chamado.";
+          mensagem.textContent = Object.entries(corpo)
+            .map(([campo, erros]) => `${campo}: ${[].concat(erros).join(" ")}`)
+            .join(" | ");
           return;
         }
 
         mensagem.className = "sucesso";
         mensagem.textContent = "Chamado cadastrado com sucesso.";
         document.getElementById("form-chamado").reset();
-        listarChamados();
+        atualizarTela();
       } catch (erro) {
         mensagem.className = "erro";
         mensagem.textContent = "A API não está disponível.";
       }
     });
 
-    document.getElementById("atualizar").addEventListener("click", listarChamados);
+    document.getElementById("atualizar").addEventListener("click", atualizarTela);
+    document.getElementById("filtro-status").addEventListener("change", listarChamados);
 
-    listarChamados();
+    atualizarTela();
   </script>
 </body>
 </html>
